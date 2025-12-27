@@ -515,7 +515,7 @@ local VelocityMultiplierSlider = MainTab:CreateSlider({
 
 local AngleSlider = MainTab:CreateSlider({
    Name = "Flap Angle",
-   Range = {10, 90},
+   Range = {10, 100},
    Increment = 5,
    Suffix = "°",
    CurrentValue = angle,
@@ -617,7 +617,7 @@ local HaloToggle = HaloTab:CreateToggle({
 
 local HaloRadiusSlider = HaloTab:CreateSlider({
    Name = "Halo Radius",
-   Range = {0.5, 5.0},
+   Range = {0.5, 100},
    Increment = 0.1,
    Suffix = "",
    CurrentValue = haloRadius,
@@ -641,7 +641,7 @@ local HaloHeightSlider = HaloTab:CreateSlider({
 
 local HaloRotationSlider = HaloTab:CreateSlider({
    Name = "Halo Rotation Speed",
-   Range = {0.0, 5.0},
+   Range = {0.0, 50},
    Increment = 0.1,
    Suffix = "x",
    CurrentValue = haloRotationSpeed,
