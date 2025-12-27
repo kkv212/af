@@ -1,0 +1,894 @@
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local targetPlayer = LocalPlayer -- 現在のターゲットプレイヤー
+
+-- ===== Rayfield UI Library =====
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "Wing Controller",
+   LoadingTitle = "Loading Wing System",
+   LoadingSubtitle = "by Sparkler Wings",
+   ConfigurationSaving = {
+      Enabled = false
+   },
+   Discord = {
+      Enabled = false
+   },
+   KeySystem = false
+})
+
+local MainTab = Window:CreateTab("🪽 Wing Settings", nil)
+local HaloTab = Window:CreateTab("😇 Halo", nil)
+local PositionTab = Window:CreateTab("📍 Position", nil)
+local RotationTab = Window:CreateTab("🔄 Rotation", nil)
+local PlayerTab = Window:CreateTab("👤 Player", nil)
+
+-- ===== 対応オブジェクト設定 =====
+local supportedObjects = {
+    ["FireworkSparkler"] = true,
+    ["GlassBoxGray"] = true,
+    ["SpookyCandle5"] = true,
+    ["PalletLightBrown"] = true,
+    ["TetracubeI"] = true,
+    ["MusicKeyboard"] = true,
+    ["LadderLightBrown"] = true,
+    ["Campfire"] = true,
+    ["Boombox"] = true,
+    ["ToiletWhite"] = true,
+    ["TractorGreen"] = true,
+    ["DiceBig"] = true,
+    ["ChildrensTableBench"] = true
+}
+
+local activeObjects = {
+    ["FireworkSparkler"] = false,
+    ["GlassBoxGray"] = false,
+    ["SpookyCandle5"] = false,
+    ["PalletLightBrown"] = false,
+    ["TetracubeI"] = false,
+    ["MusicKeyboard"] = false,
+    ["LadderLightBrown"] = false,
+    ["Campfire"] = false,
+    ["Boombox"] = false,
+    ["ToiletWhite"] = false,
+    ["TractorGreen"] = false,
+    ["DiceBig"] = false,
+    ["ChildrensTableBench"] = false
+}
+
+-- ===== 設定 =====
+local baseOffsetX = 4.125
+local compactOffsetX = 0.15
+local offsetX = 0 -- 左右のオフセット
+local offsetY = 0 -- 上下のオフセット
+local offsetZ = 1 -- 前後のオフセット
+
+local offsets = {
+    [1] = CFrame.new(-baseOffsetX + offsetX, offsetY, offsetZ),
+    [2] = CFrame.new(baseOffsetX + offsetX, offsetY, offsetZ)
+}
+
+local speed = 2
+local angle = 30
+local wingL = 5
+local maxSparklers = 10
+local wingSpacing = 1.0
+local wingsEnabled = true
+local frozenPositions = {}
+local velocityEnabled = true
+local velocityMultiplier = 1.0
+
+-- ===== 天使の輪設定 =====
+local haloEnabled = false
+local haloRadius = 2.0
+local haloHeight = 3.0
+local haloRotationSpeed = 1.0
+local haloTilt = 0
+
+-- ===== 回転設定 =====
+local rotationX = 90
+local rotationY = 0
+local rotationZ = 90
+
+-- ===== Character Proxy =====
+local Char = {}
+setmetatable(Char, {
+    __index = function(_, k)
+        local char = targetPlayer.Character
+        return char and char[k]
+    end,
+    __newindex = function(_, k, v)
+        local char = targetPlayer.Character
+        if char then
+            char[k] = v
+        end
+    end
+})
+
+-- ===== Utility =====
+local function CP()
+    local p = Instance.new("Part")
+    p.Size = Vector3.new(4,1,4)
+    p.Anchored = true
+    p.CanCollide = false
+    p.Transparency = 1
+    p.Parent = workspace
+    return p
+end
+
+local function CBM(part)
+    local BP = part:FindFirstChildOfClass("BodyPosition")
+    local BG = part:FindFirstChildOfClass("BodyGyro")
+
+    if not BP then
+        BP = Instance.new("BodyPosition")
+        BP.P = 15000
+        BP.D = 200
+        BP.MaxForce = Vector3.new(1,1,1) * 1e10
+        BP.Position = part.Position
+        BP.Parent = part
+    end
+
+    if not BG then
+        BG = Instance.new("BodyGyro")
+        BG.P = 15000
+        BG.D = 200
+        BG.MaxTorque = Vector3.new(1,1,1) * 1e10
+        BG.CFrame = part.CFrame
+        BG.Parent = part
+    end
+
+    return BG, BP
+end
+
+-- ===== Update Offsets =====
+local function updateOffsets(compact)
+    local baseOffset = compact and compactOffsetX or baseOffsetX
+    offsets = {
+        [1] = CFrame.new(-baseOffset * wingSpacing + offsetX, offsetY, offsetZ),
+        [2] = CFrame.new(baseOffset * wingSpacing + offsetX, offsetY, offsetZ)
+    }
+end
+
+-- ===== Wings =====
+local Wings = {}
+
+local function createWings()
+    Wings = {}
+    for i = 1, 2 do
+        local segs = {}
+        for _ = 1, wingL do
+            table.insert(segs, {Part = CP()})
+        end
+
+        Wings[i] = {
+            Handle = CP(),
+            Segments = segs,
+            Sync = {},
+            Reserved = nil
+        }
+    end
+end
+
+createWings()
+
+-- ===== Halo =====
+local Halo = {
+    Objects = {}
+}
+
+-- ===== Object 検索 =====
+local Toys = {}
+local HaloToys = {}
+
+local function scanAllObjects()
+    Toys = {}
+    HaloToys = {}
+    
+    local wingCount = 0
+    local haloCount = 0
+    
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Model") and supportedObjects[d.Name] and activeObjects[d.Name] then
+            if haloEnabled and haloCount < 4 then
+                table.insert(HaloToys, d)
+                haloCount += 1
+            elseif wingCount < maxSparklers * 2 then
+                table.insert(Toys, d)
+                wingCount += 1
+            end
+        end
+    end
+end
+
+scanAllObjects()
+
+workspace.DescendantAdded:Connect(function(d)
+    if d:IsA("Model") and supportedObjects[d.Name] and activeObjects[d.Name] then
+        scanAllObjects()
+    end
+end)
+
+-- ===== Bind Objects =====
+local function rebindObjects()
+    -- Clear existing bindings
+    for _, wing in ipairs(Wings) do
+        if wing.Reserved then
+            if wing.Reserved.BP then wing.Reserved.BP:Destroy() end
+            if wing.Reserved.BG then wing.Reserved.BG:Destroy() end
+            wing.Reserved = nil
+        end
+        
+        for _, sync in ipairs(wing.Sync) do
+            if sync.BP then sync.BP:Destroy() end
+            if sync.BG then sync.BG:Destroy() end
+        end
+        wing.Sync = {}
+    end
+    
+    -- Clear halo bindings
+    for _, obj in ipairs(Halo.Objects) do
+        if obj.BP then obj.BP:Destroy() end
+        if obj.BG then obj.BG:Destroy() end
+    end
+    Halo.Objects = {}
+    
+    -- Rescan objects
+    scanAllObjects()
+    
+    -- Bind halo objects
+    for i, v in ipairs(HaloToys) do
+        local part = v:FindFirstChildWhichIsA("BasePart")
+        if part then
+            for _, c in ipairs(v:GetChildren()) do
+                if c:IsA("BasePart") then
+                    c.CanCollide = false
+                end
+            end
+
+            local BG, BP = CBM(part)
+            BP.Position = part.Position
+            BG.CFrame = part.CFrame
+            
+            table.insert(Halo.Objects, {BG = BG, BP = BP, Part = part, Index = i})
+        end
+    end
+    
+    -- Bind wing objects
+    local boundCount = 0
+    
+    for i, v in ipairs(Toys) do
+        if boundCount >= maxSparklers * 2 then break end
+        
+        local side = (i <= math.ceil(#Toys / 2)) and 1 or 2
+        local part = v:FindFirstChildWhichIsA("BasePart")
+
+        if part then
+            for _, c in ipairs(v:GetChildren()) do
+                if c:IsA("BasePart") then
+                    c.CanCollide = false
+                end
+            end
+
+            local BG, BP = CBM(part)
+            BP.Position = part.Position
+            BG.CFrame = part.CFrame
+            
+            local data = {BG = BG, BP = BP, Part = part}
+
+            if not Wings[side].Reserved then
+                Wings[side].Reserved = data
+            else
+                table.insert(Wings[side].Sync, data)
+            end
+            
+            boundCount += 1
+        end
+    end
+    
+    return boundCount
+end
+
+-- ===== Freeze/Unfreeze Wings =====
+local function freezeWings()
+    frozenPositions = {}
+    
+    for i, wing in ipairs(Wings) do
+        if wing.Reserved and wing.Reserved.Part then
+            frozenPositions[wing.Reserved.Part] = {
+                Position = wing.Reserved.Part.Position,
+                CFrame = wing.Reserved.Part.CFrame
+            }
+        end
+        
+        for idx, sync in ipairs(wing.Sync) do
+            if sync.Part then
+                frozenPositions[sync.Part] = {
+                    Position = sync.Part.Position,
+                    CFrame = sync.Part.CFrame
+                }
+            end
+        end
+    end
+end
+
+-- ===== Player Tab =====
+local PlayerSection = PlayerTab:CreateSection("Target Player")
+
+local playerDropdownOptions = {}
+local playerDropdown
+
+local function updatePlayerList()
+    playerDropdownOptions = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        table.insert(playerDropdownOptions, player.Name)
+    end
+    return playerDropdownOptions
+end
+
+playerDropdown = PlayerTab:CreateDropdown({
+   Name = "Select Player",
+   Options = updatePlayerList(),
+   CurrentOption = {LocalPlayer.Name},
+   MultipleOptions = false,
+   Flag = "PlayerDropdown",
+   Callback = function(option)
+       local selectedPlayer = Players:FindFirstChild(option[1])
+       if selectedPlayer and selectedPlayer.Character then
+           targetPlayer = selectedPlayer
+           Rayfield:Notify({
+              Title = "Target Changed",
+              Content = "Now targeting: " .. option[1],
+              Duration = 3,
+           })
+       end
+   end,
+})
+
+local RefreshPlayersButton = PlayerTab:CreateButton({
+   Name = "Refresh Player List",
+   Callback = function()
+       playerDropdown:Refresh(updatePlayerList(), true)
+       Rayfield:Notify({
+          Title = "Player List Refreshed",
+          Content = #Players:GetPlayers() .. " players found",
+          Duration = 2,
+       })
+   end,
+})
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.5)
+    playerDropdown:Refresh(updatePlayerList(), true)
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.5)
+    playerDropdown:Refresh(updatePlayerList(), true)
+end)
+
+-- ===== UI Controls - Main Tab =====
+local ObjectSection = MainTab:CreateSection("Object Selection")
+
+local function getObjectList()
+    local objects = {}
+    for objName, _ in pairs(supportedObjects) do
+        table.insert(objects, objName)
+    end
+    table.sort(objects)
+    return objects
+end
+
+local function getActiveObjectList()
+    local active = {}
+    for objName, isActive in pairs(activeObjects) do
+        if isActive then
+            table.insert(active, objName)
+        end
+    end
+    if #active == 0 then
+        return {"None"}
+    end
+    return active
+end
+
+local ObjectDropdown = MainTab:CreateDropdown({
+   Name = "Select Objects to Use",
+   Options = getObjectList(),
+   CurrentOption = getActiveObjectList(),
+   MultipleOptions = true,
+   Flag = "ObjectSelection",
+   Callback = function(options)
+       for objName, _ in pairs(activeObjects) do
+           activeObjects[objName] = false
+       end
+       
+       for _, objName in ipairs(options) do
+           if supportedObjects[objName] then
+               activeObjects[objName] = true
+           end
+       end
+       
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = "Objects Updated",
+          Content = count .. " objects bound",
+          Duration = 2,
+       })
+   end,
+})
+
+local SelectAllButton = MainTab:CreateButton({
+   Name = "Select All Objects",
+   Callback = function()
+       for objName, _ in pairs(activeObjects) do
+           activeObjects[objName] = true
+       end
+       ObjectDropdown:Set(getObjectList())
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = "All Objects Selected",
+          Content = count .. " objects bound",
+          Duration = 2,
+       })
+   end,
+})
+
+local DeselectAllButton = MainTab:CreateButton({
+   Name = "Deselect All Objects",
+   Callback = function()
+       for objName, _ in pairs(activeObjects) do
+           activeObjects[objName] = false
+       end
+       ObjectDropdown:Set({"None"})
+       rebindObjects()
+       Rayfield:Notify({
+          Title = "All Objects Deselected",
+          Content = "No objects bound",
+          Duration = 2,
+       })
+   end,
+})
+
+local ControlSection = MainTab:CreateSection("Wing Controls")
+
+local WingsToggle = MainTab:CreateToggle({
+   Name = "Enable Wings",
+   CurrentValue = true,
+   Flag = "WingsEnabled",
+   Callback = function(v)
+       wingsEnabled = v
+       if not wingsEnabled then
+           freezeWings()
+       end
+       Rayfield:Notify({
+          Title = wingsEnabled and "Wings Enabled" or "Wings Frozen",
+          Content = wingsEnabled and "Wings are now active" or "Wings frozen in place",
+          Duration = 2,
+       })
+   end,
+})
+
+local VelocityToggle = MainTab:CreateToggle({
+   Name = "Velocity Effect",
+   CurrentValue = true,
+   Flag = "VelocityEnabled",
+   Callback = function(v)
+       velocityEnabled = v
+       Rayfield:Notify({
+          Title = velocityEnabled and "Velocity Enabled" or "Velocity Disabled",
+          Content = velocityEnabled and "Wings speed affected by movement" or "Wings speed constant",
+          Duration = 2,
+       })
+   end,
+})
+
+local SpeedSlider = MainTab:CreateSlider({
+   Name = "Wing Speed",
+   Range = {0.5, 10},
+   Increment = 0.5,
+   Suffix = "x",
+   CurrentValue = speed,
+   Flag = "WingSpeed",
+   Callback = function(v)
+       speed = v
+   end,
+})
+
+local VelocityMultiplierSlider = MainTab:CreateSlider({
+   Name = "Velocity Effect Strength",
+   Range = {0.0, 5.0},
+   Increment = 0.1,
+   Suffix = "x",
+   CurrentValue = velocityMultiplier,
+   Flag = "VelocityMultiplier",
+   Callback = function(v)
+       velocityMultiplier = v
+   end,
+})
+
+local AngleSlider = MainTab:CreateSlider({
+   Name = "Flap Angle",
+   Range = {10, 90},
+   Increment = 5,
+   Suffix = "°",
+   CurrentValue = angle,
+   Flag = "FlapAngle",
+   Callback = function(v)
+       angle = v
+   end,
+})
+
+local SpacingSlider = MainTab:CreateSlider({
+   Name = "Wing Spacing (Width)",
+   Range = {0.1, 5.0},
+   Increment = 0.1,
+   Suffix = "x",
+   CurrentValue = wingSpacing,
+   Flag = "WingSpacing",
+   Callback = function(v)
+       wingSpacing = v
+       updateOffsets(compact)
+   end,
+})
+
+local LengthSlider = MainTab:CreateSlider({
+   Name = "Wing Length",
+   Range = {1, 50},
+   Increment = 1,
+   Suffix = " segments",
+   CurrentValue = wingL,
+   Flag = "WingLength",
+   Callback = function(v)
+       wingL = v
+       createWings()
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = "Wings Rebuilt",
+          Content = count .. " objects bound",
+          Duration = 3,
+       })
+   end,
+})
+
+local MaxSparklersSlider = MainTab:CreateSlider({
+   Name = "Max Objects per Wing",
+   Range = {1, 1000},
+   Increment = 10,
+   Suffix = " objects",
+   CurrentValue = maxSparklers,
+   Flag = "MaxSparklers",
+   Callback = function(v)
+       maxSparklers = v
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = "Limit Updated",
+          Content = count .. " objects bound",
+          Duration = 3,
+       })
+   end,
+})
+
+local CompactToggle = MainTab:CreateToggle({
+   Name = "Compact Mode (X)",
+   CurrentValue = false,
+   Flag = "CompactMode",
+   Callback = function(v)
+       compact = v
+       updateOffsets(compact)
+   end,
+})
+
+local RefreshButton = MainTab:CreateButton({
+   Name = "Refresh Objects",
+   Callback = function()
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = "Refreshed",
+          Content = count .. " objects bound to wings",
+          Duration = 3,
+       })
+   end,
+})
+
+-- ===== Halo Tab =====
+local HaloSection = HaloTab:CreateSection("Angel Halo Settings")
+
+local HaloToggle = HaloTab:CreateToggle({
+   Name = "Enable Halo",
+   CurrentValue = false,
+   Flag = "HaloEnabled",
+   Callback = function(v)
+       haloEnabled = v
+       local count = rebindObjects()
+       Rayfield:Notify({
+          Title = haloEnabled and "Halo Enabled" or "Halo Disabled",
+          Content = haloEnabled and "Angel halo active" or "Halo removed",
+          Duration = 2,
+       })
+   end,
+})
+
+local HaloRadiusSlider = HaloTab:CreateSlider({
+   Name = "Halo Radius",
+   Range = {0.5, 5.0},
+   Increment = 0.1,
+   Suffix = "",
+   CurrentValue = haloRadius,
+   Flag = "HaloRadius",
+   Callback = function(v)
+       haloRadius = v
+   end,
+})
+
+local HaloHeightSlider = HaloTab:CreateSlider({
+   Name = "Halo Height",
+   Range = {0.0, 10.0},
+   Increment = 0.1,
+   Suffix = "",
+   CurrentValue = haloHeight,
+   Flag = "HaloHeight",
+   Callback = function(v)
+       haloHeight = v
+   end,
+})
+
+local HaloRotationSlider = HaloTab:CreateSlider({
+   Name = "Halo Rotation Speed",
+   Range = {0.0, 5.0},
+   Increment = 0.1,
+   Suffix = "x",
+   CurrentValue = haloRotationSpeed,
+   Flag = "HaloRotation",
+   Callback = function(v)
+       haloRotationSpeed = v
+   end,
+})
+
+local HaloTiltSlider = HaloTab:CreateSlider({
+   Name = "Halo Tilt",
+   Range = {-45, 45},
+   Increment = 5,
+   Suffix = "°",
+   CurrentValue = haloTilt,
+   Flag = "HaloTilt",
+   Callback = function(v)
+       haloTilt = v
+   end,
+})
+
+-- ===== Position Tab =====
+local PositionSection = PositionTab:CreateSection("Wing Position Adjustment")
+
+local OffsetXSlider = PositionTab:CreateSlider({
+   Name = "Left-Right Offset",
+   Range = {-10.0, 10.0},
+   Increment = 0.1,
+   Suffix = "",
+   CurrentValue = offsetX,
+   Flag = "OffsetX",
+   Callback = function(v)
+       offsetX = v
+       updateOffsets(compact)
+   end,
+})
+
+local OffsetYSlider = PositionTab:CreateSlider({
+   Name = "Up-Down Offset",
+   Range = {-10.0, 10.0},
+   Increment = 0.1,
+   Suffix = "",
+   CurrentValue = offsetY,
+   Flag = "OffsetY",
+   Callback = function(v)
+       offsetY = v
+       updateOffsets(compact)
+   end,
+})
+
+local OffsetZSlider = PositionTab:CreateSlider({
+   Name = "Front-Back Offset",
+   Range = {-10.0, 10.0},
+   Increment = 0.1,
+   Suffix = "",
+   CurrentValue = offsetZ,
+   Flag = "OffsetZ",
+   Callback = function(v)
+       offsetZ = v
+       updateOffsets(compact)
+   end,
+})
+
+local ResetPositionButton = PositionTab:CreateButton({
+   Name = "Reset Position to Default",
+   Callback = function()
+       offsetX = 0
+       offsetY = 0
+       offsetZ = 1
+       OffsetXSlider:Set(0)
+       OffsetYSlider:Set(0)
+       OffsetZSlider:Set(1)
+       updateOffsets(compact)
+       Rayfield:Notify({
+          Title = "Position Reset",
+          Content = "Reset to default position",
+          Duration = 2,
+       })
+   end,
+})
+
+-- ===== Rotation Tab =====
+local RotationSection = RotationTab:CreateSection("Object Rotation")
+
+local RotationXSlider = RotationTab:CreateSlider({
+   Name = "X-Axis Rotation",
+   Range = {0, 360},
+   Increment = 5,
+   Suffix = "°",
+   CurrentValue = rotationX,
+   Flag = "RotationX",
+   Callback = function(v)
+       rotationX = v
+   end,
+})
+
+local RotationYSlider = RotationTab:CreateSlider({
+   Name = "Y-Axis Rotation",
+   Range = {0, 360},
+   Increment = 5,
+   Suffix = "°",
+   CurrentValue = rotationY,
+   Flag = "RotationY",
+   Callback = function(v)
+       rotationY = v
+   end,
+})
+
+local RotationZSlider = RotationTab:CreateSlider({
+   Name = "Z-Axis Rotation",
+   Range = {0, 360},
+   Increment = 5,
+   Suffix = "°",
+   CurrentValue = rotationZ,
+   Flag = "RotationZ",
+   Callback = function(v)
+       rotationZ = v
+   end,
+})
+
+local ResetRotationButton = RotationTab:CreateButton({
+   Name = "Reset to Default (90, 0, 90)",
+   Callback = function()
+       rotationX = 90
+       rotationY = 0
+       rotationZ = 90
+       RotationXSlider:Set(90)
+       RotationYSlider:Set(0)
+       RotationZSlider:Set(90)
+       Rayfield:Notify({
+          Title = "Rotation Reset",
+          Content = "Reset to default rotation",
+          Duration = 2,
+       })
+   end,
+})
+
+-- Initial bind
+task.wait(1)
+local initialCount = rebindObjects()
+Rayfield:Notify({
+   Title = "Wing System Ready",
+   Content = initialCount .. " objects detected",
+   Duration = 5,
+})
+
+-- ===== Offset Toggle =====
+local compact = false
+UserInputService.InputBegan:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == Enum.KeyCode.X then
+        compact = not compact
+        CompactToggle:Set(compact)
+    end
+end)
+
+-- ===== Animate =====
+local t = 0
+local haloTime = 0
+RunService.RenderStepped:Connect(function(dt)
+    if not targetPlayer.Character then return end
+    local torso = targetPlayer.Character:FindFirstChild("Torso")
+    local hrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local head = targetPlayer.Character:FindFirstChild("Head")
+    if not torso or not hrp then return end
+    
+    -- ===== Halo Animation =====
+    if haloEnabled and head then
+        haloTime += dt * haloRotationSpeed
+        
+        for _, obj in ipairs(Halo.Objects) do
+            if obj.Part then
+                local angle = ((obj.Index - 1) / 4) * math.pi * 2 + haloTime
+                local x = math.cos(angle) * haloRadius
+                local z = math.sin(angle) * haloRadius
+                
+                local tiltRad = math.rad(haloTilt)
+                local headCF = head.CFrame * CFrame.new(0, haloHeight, 0)
+                local ringCF = headCF * CFrame.Angles(tiltRad, 0, 0) * CFrame.new(x, 0, z)
+                
+                obj.BP.Position = ringCF.Position
+                obj.BG.CFrame = ringCF * CFrame.Angles(math.rad(rotationX), math.rad(rotationY), math.rad(rotationZ))
+            end
+        end
+    end
+    
+    -- ===== Wing Animation =====
+    if not wingsEnabled then
+        for i, wing in ipairs(Wings) do
+            if wing.Reserved and wing.Reserved.Part then
+                local frozen = frozenPositions[wing.Reserved.Part]
+                if frozen then
+                    wing.Reserved.BP.Position = frozen.Position
+                    wing.Reserved.BG.CFrame = frozen.CFrame
+                end
+            end
+            
+            for idx, sync in ipairs(wing.Sync) do
+                if sync.Part then
+                    local frozen = frozenPositions[sync.Part]
+                    if frozen then
+                        sync.BP.Position = frozen.Position
+                        sync.BG.CFrame = frozen.CFrame
+                    end
+                end
+            end
+        end
+        return
+    end
+    
+    local velocityEffect = 0
+    if velocityEnabled then
+        velocityEffect = (hrp.Velocity.Magnitude / 40) * velocityMultiplier
+    end
+    
+    t += dt * (speed + velocityEffect)
+
+    for i, wing in ipairs(Wings) do
+        if not wing.Reserved or not wing.Reserved.Part then continue end
+
+        local dir = (i == 1) and 1 or -1
+        local flap = math.sin(t) * math.rad(angle) * dir
+        local rot = CFrame.Angles(0, 0, flap)
+
+        wing.Handle.CFrame = torso.CFrame * offsets[i] * rot
+        wing.Reserved.BP.Position = wing.Handle.Position
+        
+        wing.Reserved.BG.CFrame = wing.Handle.CFrame * CFrame.Angles(
+            math.rad(rotationX), 
+            math.rad(rotationY), 
+            math.rad(rotationZ)
+        )
+
+        for idx, seg in ipairs(wing.Segments) do
+            local follow = (idx == 1) and wing.Handle.CFrame or wing.Segments[idx-1].Part.CFrame
+            seg.Part.CFrame = seg.Part.CFrame:Lerp(follow * offsets[i], 0.5)
+
+            local sync = wing.Sync[idx]
+            if sync and sync.Part then
+                sync.BP.Position = seg.Part.Position
+                
+                sync.BG.CFrame = seg.Part.CFrame * CFrame.Angles(
+                    math.rad(rotationX), 
+                    math.rad(rotationY), 
+                    math.rad(rotationZ)
+                )
+            end
+        end
+    end
+end)
