@@ -491,7 +491,7 @@ local VelocityToggle = MainTab:CreateToggle({
 
 local SpeedSlider = MainTab:CreateSlider({
    Name = "Wing Speed",
-   Range = {0.5, 10},
+   Range = {0.5, 50},
    Increment = 0.5,
    Suffix = "x",
    CurrentValue = speed,
@@ -515,7 +515,7 @@ local VelocityMultiplierSlider = MainTab:CreateSlider({
 
 local AngleSlider = MainTab:CreateSlider({
    Name = "Flap Angle",
-   Range = {10, 100},
+   Range = {10, 500},
    Increment = 5,
    Suffix = "°",
    CurrentValue = angle,
