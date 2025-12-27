@@ -11,7 +11,7 @@ local targetPlayer = LocalPlayer -- 現在のターゲットプレイヤー
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-   Name = "Wing Controller",
+   Name = "tokra wings lol",
    LoadingTitle = "Loading Wing System",
    LoadingSubtitle = "by Sparkler Wings",
    ConfigurationSaving = {
@@ -515,7 +515,7 @@ local VelocityMultiplierSlider = MainTab:CreateSlider({
 
 local AngleSlider = MainTab:CreateSlider({
    Name = "Flap Angle",
-   Range = {10, 500},
+   Range = {10, 100},
    Increment = 5,
    Suffix = "°",
    CurrentValue = angle,
